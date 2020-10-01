@@ -13,41 +13,32 @@ import {
 
 const Room = (props) => {
     const peerRef = useRef();
+    const socketRef = useRef();
+    const otherUser = useRef();
     const sendChannel = useRef();
     const [text, setText] = useState("");
     const [messages, setMessages] = useState([]);
 
-    const [{socket,otherUser }, setState] = useReducer(
-        (state, action) => ({ ...state, ...action }), 
-    {
-        socket: null,
-        otherUser: null,
-    })
-
     useEffect(() => {
-        setState({socket: io.connect("http://localhost:8000")});
+        socketRef.current = io.connect("http://localhost:8000");
+        socketRef.current.emit("join room", props.match.params.roomID);
+
+        socketRef.current.on('other user', userID => {
+            callUser(userID);
+            otherUser.current = userID;
+        });
+
+        socketRef.current.on("user joined", userID => {
+            otherUser.current = userID;
+        });
+
+        socketRef.current.on("offer", handleOffer);
+
+        socketRef.current.on("answer", handleAnswer);
+
+        socketRef.current.on("ice-candidate", handleNewICECandidateMsg);
+
     }, []);
-
-    useEffect(() => {
-        if (socket) {
-            socket.emit("join room", props.match.params.roomID);
-
-            socket.on('other user', userID => {
-                callUser(userID);
-                setState({otherUser: userID});
-            });
-
-            socket.on("user joined", userID => {
-                setState({otherUser: userID});
-            });
-
-            socket.on("offer", handleOffer);
-
-            socket.on("answer", handleAnswer);
-
-            socket.on("ice-candidate", handleNewICECandidateMsg);
-        }
-    }, [socket]);
 
 
     function callUser(userID) {
@@ -56,6 +47,7 @@ const Room = (props) => {
         sendChannel.current.onmessage = handleReceiveMessage
     }
 
+    
     function handleReceiveMessage(e) {
         setMessages(messages=> [...messages, {yours: false, value: e.data}])
     }
@@ -77,6 +69,7 @@ const Room = (props) => {
         peer.onicecandidate = handleICECandidateEvent;
         peer.onnegotiationneeded = () => handleNegotiationNeededEvent(userID);
 
+
         return peer;
     }
 
@@ -86,17 +79,16 @@ const Room = (props) => {
         }).then(() => {
             const payload = {
                 target: userID,
-                caller: socket.id,
+                caller: socketRef.current.id,
                 sdp: peerRef.current.localDescription
             };
-            socket.emit("offer", payload);
+            socketRef.current.emit("offer", payload);
         }).catch(e => console.log(e));
     }
 
     function handleOffer(incoming) {
         peerRef.current = createPeer();
         peerRef.current.ondatachannel = (event)=> {
-            console.log('event.channel', event.channel)
             sendChannel.current = event.channel;
             sendChannel.current.onmessage = handleReceiveMessage
         }
@@ -109,10 +101,10 @@ const Room = (props) => {
         }).then(() => {
             const payload = {
                 target: incoming.caller,
-                caller: socket.id,
+                caller: socketRef.current.id,
                 sdp: peerRef.current.localDescription
             }
-            socket.emit("answer", payload);
+            socketRef.current.emit("answer", payload);
         })
     }
 
@@ -124,10 +116,10 @@ const Room = (props) => {
     function handleICECandidateEvent(e) {
         if (e.candidate) {
             const payload = {
-                target: otherUser,
+                target: otherUser.current,
                 candidate: e.candidate,
             }
-            socket.emit("ice-candidate", payload);
+            socketRef.current.emit("ice-candidate", payload);
         }
     }
 
